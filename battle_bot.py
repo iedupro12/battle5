@@ -344,96 +344,119 @@ def create_battle_rooms(session, count):
 
         print(f"[{len(urls) + 1}/{count}] Trying topic: {topic_name} (ID: {topic_id})")
 
-        # Step 1: Quick Exam API
-        quick_url = "https://mujib.chorcha.net/exam/quick"
-        try:
-            res = session.post(quick_url, json={"topics": [topic_id], "type": "BATTLE"}, headers={"Content-Type": "application/json"})
-            if res.status_code != 200:
-                print(f"    [-] Quick Exam API failed with status {res.status_code}")
-                continue
-            
-            res_data = res.json()
-            if res_data.get('status') == 'error':
-                msg = res_data.get('data') or 'Error'
-                print(f"    [-] Topic skipped ({msg})")
-                continue
+        # Step 1: Quick Exam API (trying mujib.chorcha.net then api.chorcha.net)
+        quick_endpoints = [
+            "https://mujib.chorcha.net/exam/quick",
+            "https://api.chorcha.net/exam/quick"
+        ]
+        res = None
+        for ep in quick_endpoints:
+            try:
+                res = session.post(ep, json={"topics": [topic_id], "type": "BATTLE"}, headers={"Content-Type": "application/json"}, timeout=10)
+                if res.status_code == 200:
+                    break
+            except Exception:
+                pass
+                
+        if not res or res.status_code != 200:
+            print(f"    [-] Quick Exam API failed across endpoints.")
+            continue
+        
+        res_data = res.json()
+        if res_data.get('status') == 'error':
+            msg = res_data.get('data') or 'Error'
+            print(f"    [-] Topic skipped ({msg})")
+            continue
 
-            druto_id = res_data.get('data', {}).get('druto_id')
-            if not druto_id:
-                print(f"    [-] druto_id not found in response: {res.text}")
-                continue
-            
-            # Step 2: Battle Create API
-            create_url = "https://mujib.chorcha.net/battle/create"
-            res = session.post(create_url, json={
-                "druto_id": druto_id,
-                "topic_id": topic_id,
-                "challenge_type": "friends",
-                "topic_name": topic_name
-            }, headers={"Content-Type": "application/json"})
-            
-            if res.status_code != 200:
-                print(f"    [-] Battle Create API failed with status {res.status_code}")
-                continue
-            
-            room_id = res.json().get('data', {}).get('room_id')
-            if not room_id:
-                print(f"    [-] room_id not found in response: {res.text}")
-                continue
+        druto_id = res_data.get('data', {}).get('druto_id')
+        if not druto_id:
+            print(f"    [-] druto_id not found in response: {res.text}")
+            continue
+        
+        # Step 2: Battle Create API
+        create_endpoints = [
+            "https://mujib.chorcha.net/battle/create",
+            "https://api.chorcha.net/battle/create"
+        ]
+        res = None
+        for ep in create_endpoints:
+            try:
+                res = session.post(ep, json={
+                    "druto_id": druto_id,
+                    "topic_id": topic_id,
+                    "challenge_type": "friends",
+                    "topic_name": topic_name
+                }, headers={"Content-Type": "application/json"}, timeout=10)
+                if res.status_code == 200:
+                    break
+            except Exception:
+                pass
+        
+        if not res or res.status_code != 200:
+            print(f"    [-] Battle Create API failed across endpoints.")
+            continue
+        
+        room_id = res.json().get('data', {}).get('room_id')
+        if not room_id:
+            print(f"    [-] room_id not found in response: {res.text}")
+            continue
 
-            battle_url = f"https://chorcha.net/battle/{room_id}?topic={urllib.parse.quote(topic_name)}&druto_id={druto_id}"
-            print(f"    [+] Created battle room ({len(urls) + 1}/{count}): {battle_url}")
-            urls.append(battle_url)
-            
-            # Delay to avoid rate limiting
-            time.sleep(2)
-        except Exception as e:
-            print(f"    [-] Exception creating battle room: {e}")
+        battle_url = f"https://chorcha.net/battle/{room_id}?topic={urllib.parse.quote(topic_name)}&druto_id={druto_id}"
+        print(f"    [+] Created battle room ({len(urls) + 1}/{count}): {battle_url}")
+        urls.append(battle_url)
+        
+        # Delay to avoid rate limiting
+        time.sleep(2)
     return urls
 
 def fetch_and_decode_answers(session, druto_id):
-    config_url = "https://mujib.chorcha.net/battle/exam-config"
-    headers = {
-        'Content-Type': 'application/json'
-    }
-    try:
-        res = session.post(config_url, json={"druto_id": druto_id}, headers=headers)
-        if res.status_code != 200:
-            print(f"[-] Failed to fetch battle answers config: HTTP {res.status_code}")
-            return None
-        
-        data = res.json()
-        
-        # Extract questions from raw plaintext response
-        questions = (
-            data.get('data', {}).get('questions') or 
-            data.get('data', {}).get('exam_questions') or 
-            data.get('questions') or 
-            []
-        )
-        
-        answers_map = {}
-        for idx, q in enumerate(questions):
-            ans_val = q.get('answer')
-            correct_idx = q.get('correct_answer')
-            
-            if correct_idx is not None:
-                answers_map[idx + 1] = int(correct_idx)
-            elif ans_val is not None:
-                ans_str = str(ans_val).upper().strip()
-                mapping = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
-                if ans_str in mapping:
-                    answers_map[idx + 1] = mapping[ans_str]
-                else:
-                    try:
-                        answers_map[idx + 1] = int(ans_str)
-                    except ValueError:
-                        answers_map[idx + 1] = ans_str
-        
-        return answers_map
-    except Exception as e:
-        print(f"[-] Exception fetching answers: {e}")
+    config_endpoints = [
+        "https://mujib.chorcha.net/battle/exam-config",
+        "https://api.chorcha.net/battle/exam-config"
+    ]
+    headers = {'Content-Type': 'application/json'}
+    res = None
+    for ep in config_endpoints:
+        try:
+            res = session.post(ep, json={"druto_id": druto_id}, headers=headers, timeout=10)
+            if res.status_code == 200:
+                break
+        except Exception:
+            pass
+
+    if not res or res.status_code != 200:
+        print(f"[-] Failed to fetch battle answers config.")
         return None
+    
+    data = res.json()
+    
+    # Extract questions from raw plaintext response
+    questions = (
+        data.get('data', {}).get('questions') or 
+        data.get('data', {}).get('exam_questions') or 
+        data.get('questions') or 
+        []
+    )
+    
+    answers_map = {}
+    for idx, q in enumerate(questions):
+        ans_val = q.get('answer')
+        correct_idx = q.get('correct_answer')
+        
+        if correct_idx is not None:
+            answers_map[idx + 1] = int(correct_idx)
+        elif ans_val is not None:
+            ans_str = str(ans_val).upper().strip()
+            mapping = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
+            if ans_str in mapping:
+                answers_map[idx + 1] = mapping[ans_str]
+            else:
+                try:
+                    answers_map[idx + 1] = int(ans_str)
+                except ValueError:
+                    answers_map[idx + 1] = ans_str
+    
+    return answers_map
 
 async def play_battle(context, url_idx, url, session):
     print(f"\n========================================")
@@ -456,7 +479,16 @@ async def play_battle(context, url_idx, url, session):
     print(f"[+] [{url_idx}] Loaded {len(answers_map)} answers.")
     
     page = await context.new_page()
-    await page.goto(url)
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    except Exception as e:
+        print(f"[-] [{url_idx}] page.goto timed out or failed: {e}")
+        try:
+            await page.close()
+        except Exception:
+            pass
+        return
+
     try:
         await page.wait_for_load_state("networkidle", timeout=10000)
     except Exception:
@@ -465,11 +497,13 @@ async def play_battle(context, url_idx, url, session):
     # Click "ব্যাটেল শুরু করো"
     try:
         start_btn = page.locator("button:has-text('ব্যাটেল শুরু করো')")
-        await start_btn.wait_for(state="visible", timeout=10000)
+        await start_btn.wait_for(state="visible", timeout=15000)
         await start_btn.click()
         print(f"[+] [{url_idx}] Clicked 'ব্যাটেল শুরু করো'")
     except Exception as e:
         print(f"[-] [{url_idx}] Start button not found or click failed (maybe already started): {e}")
+    
+    OPTION_SELECTOR = "button.custom-scrollbar, button.flex.w-full.gap-2.rounded-lg, button.flex.w-full.items-center.gap-2.rounded-xl"
     
     # Wait for battle to start (when 4 non-empty option buttons appear)
     print(f"[*] [{url_idx}] Waiting for opponent to join and battle to start...")
@@ -478,8 +512,8 @@ async def play_battle(context, url_idx, url, session):
     
     while True:
         try:
-            # Find all buttons
-            buttons = await page.locator("button.custom-scrollbar, button.flex.w-full.gap-2.rounded-lg").all()
+            # Find all buttons matching option selectors
+            buttons = await page.locator(OPTION_SELECTOR).all()
             non_empty_buttons = []
             for btn in buttons:
                 try:
@@ -512,7 +546,16 @@ async def play_battle(context, url_idx, url, session):
     
     while answered_count < total_questions:
         # Find current options
-        buttons = await page.locator("button.custom-scrollbar, button.flex.w-full.gap-2.rounded-lg").all()
+        all_buttons = await page.locator(OPTION_SELECTOR).all()
+        buttons = []
+        for btn in all_buttons:
+            try:
+                txt = (await btn.inner_text()).strip()
+                if txt:
+                    buttons.append(btn)
+            except Exception:
+                pass
+                
         if len(buttons) < 4:
             await page.wait_for_timeout(500)
             consecutive_misses += 1
@@ -549,7 +592,7 @@ async def play_battle(context, url_idx, url, session):
         # Retrieve question text via page.evaluate
         try:
             question_text = await page.evaluate("""() => {
-                const btns = Array.from(document.querySelectorAll('button.custom-scrollbar, button.flex.w-full.gap-2.rounded-lg')).filter(b => b.innerText.trim() !== "");
+                const btns = Array.from(document.querySelectorAll('button.custom-scrollbar, button.flex.w-full.gap-2.rounded-lg, button.flex.w-full.items-center.gap-2.rounded-xl')).filter(b => b.innerText.trim() !== "");
                 if (btns.length === 0) return "";
                 const firstBtn = btns[0];
                 const parent = firstBtn.parentElement;
@@ -604,9 +647,35 @@ async def play_battle(context, url_idx, url, session):
             print(f"[-] [{url_idx}] Failed to click option button: {e}")
             await page.wait_for_timeout(500)
     
-    print(f"[+] [{url_idx}] All questions answered. Waiting 3.5 seconds to load scoreboard...")
-    await page.wait_for_timeout(6000)
+    print(f"[+] [{url_idx}] All questions answered. Waiting up to 25 seconds for scoreboard screen to load...")
     
+    # Poll up to 25 seconds for scoreboard screen and "এগিয়ে যাও" button
+    scoreboard_loaded = False
+    button_clicked = False
+    start_sb_wait = time.time()
+    
+    egie_locator = page.locator("button:has-text('এগিয়ে যাও'), a:has-text('এগিয়ে যাও'), button:has-text('এগিয়ে যাও'), a:has-text('এগিয়ে যাও'), button:has-text('পরবর্তী'), a:has-text('পরবর্তী'), button:has-text('ফলাফল')")
+    
+    while time.time() - start_sb_wait < 25:
+        try:
+            if await egie_locator.count() > 0 and await egie_locator.first.is_visible():
+                scoreboard_loaded = True
+                print(f"[+] [{url_idx}] Scoreboard loaded after {int(time.time() - start_sb_wait)}s! Clicking 'এগিয়ে যাও' button...")
+                await egie_locator.first.click()
+                button_clicked = True
+                print(f"[*] [{url_idx}] Waiting 6 seconds for page to load after clicking...")
+                await page.wait_for_timeout(6000)
+                print(f"[*] [{url_idx}] Waiting additional 3 seconds...")
+                await page.wait_for_timeout(3000)
+                break
+        except Exception as e:
+            print(f"[-] [{url_idx}] Error checking scoreboard button: {e}")
+            
+        await page.wait_for_timeout(1000)
+        
+    if not scoreboard_loaded:
+        print(f"[-] [{url_idx}] Scoreboard screen / button did not appear within 25 seconds.")
+
     # Take screenshot
     screenshot_path = f"battle_result_{url_idx}.png"
     try:
@@ -636,10 +705,13 @@ async def play_battle(context, url_idx, url, session):
             screenshot_path
         )
     
-    await page.close()
+    try:
+        await page.close()
+    except Exception:
+        pass
     print(f"[+] [{url_idx}] Finished Battle.")
 
-async def run_battle_automation(urls, cookies_list, session):
+async def run_battle_automation(urls, cookies_list, session, batch_size=4):
     formatted_cookies = format_cookies_for_playwright(cookies_list)
     
     async with async_playwright() as p:
@@ -649,14 +721,31 @@ async def run_battle_automation(urls, cookies_list, session):
         context = await browser.new_context()
         await context.add_cookies(formatted_cookies)
         
-        print("[*] Playwright browser launched and cookies injected.")
+        print(f"[*] Playwright browser launched and cookies injected. Running in batches of {batch_size} tabs concurrently...")
         
-        # Start all battles in parallel
-        tasks = []
-        for url_idx, url in enumerate(urls, 1):
-            tasks.append(play_battle(context, url_idx, url, session))
+        # Split URLs into batches of batch_size (e.g. 3)
+        total_urls = len(urls)
+        for i in range(0, total_urls, batch_size):
+            batch_urls = urls[i:i + batch_size]
+            current_batch_num = (i // batch_size) + 1
+            total_batches = (total_urls + batch_size - 1) // batch_size
+            print(f"\n========================================================")
+            print(f"[*] Starting Batch {current_batch_num}/{total_batches} ({len(batch_urls)} battles in parallel)")
+            print(f"========================================================")
+            
+            tasks = []
+            for batch_offset, url in enumerate(batch_urls):
+                url_idx = i + batch_offset + 1
+                tasks.append(play_battle(context, url_idx, url, session))
+                
+            # Run the current batch of tabs in parallel
+            await asyncio.gather(*tasks, return_exceptions=True)
+            
+            print(f"[+] Batch {current_batch_num}/{total_batches} completed.")
+            if i + batch_size < total_urls:
+                print("[*] Waiting 2 seconds before launching next batch in same browser instance...")
+                await asyncio.sleep(2)
         
-        await asyncio.gather(*tasks)
         await context.close()
         await browser.close()
     print("\n[*] All automation runs completed successfully!")
